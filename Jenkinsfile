@@ -21,6 +21,10 @@ pipeline {
         stage('Terraform Init & Apply Infra') {
             steps {
                 dir('Terraform') {
+                    withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds'
+                ]]) {
                     sh '''
                         terraform init
                         terraform apply -auto-approve
