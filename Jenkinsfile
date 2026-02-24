@@ -3,99 +3,130 @@ pipeline {
 
     environment {
         AWS_REGION = "us-east-1"
-        DB_HOST    = "easycrud-mysql.cwliqc0oaf7s.us-east-1.rds.amazonaws.com"
         DB_PORT    = "3306"
-    }
-
-    options {
-        timestamps()
+        IMAGE_TAG  = "latest"
     }
 
     stages {
 
         stage('Checkout Code') {
             steps {
-                echo "Cloning Repository..."
                 git branch: 'main',
                     url: 'https://github.com/orion-pax77/EasyCRUD-Docker.git'
             }
         }
 
-        stage('Terraform Init') {
+        stage('Terraform Init & Apply') {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds'
+                    credentialsId: 'aws-creds',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    sh '''
+                    sh """
                         terraform -chdir=terraform init -upgrade
                         terraform -chdir=terraform validate
-                    '''
+                        terraform -chdir=terraform apply -auto-approve
+                    """
                 }
             }
         }
 
-        stage('Terraform Plan') {
+        stage('Fetch RDS Endpoint') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds'
-                ]]) {
-                    sh 'terraform -chdir=terraform plan -out=tfplan'
+                script {
+                    env.RDS_ENDPOINT = sh(
+                        script: "terraform -chdir=terraform output -raw rds_endpoint",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "RDS Endpoint: ${env.RDS_ENDPOINT}"
                 }
             }
         }
 
-        stage('Terraform Apply Infrastructure') {
+        stage('Update application.properties') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds'
-                ]]) {
-                    sh 'terraform -chdir=terraform apply -auto-approve tfplan'
+                script {
+                    sh """
+                        if [ -f backend/src/main/resources/application.properties ]; then
+                            sed -i 's|spring.datasource.url=.*|spring.datasource.url=jdbc:mysql://${env.RDS_ENDPOINT}:${env.DB_PORT}/easycrud-mysql|' backend/src/main/resources/application.properties
+                        else
+                            echo "application.properties not found!"
+                            exit 1
+                        fi
+                    """
+                }
+            }
+        }
+        
+        stage('Build Backend Image') {
+            steps {
+                dir('backend') {
+                    sh "docker build -t orionpax77/easycrud1-jenkins:backend-${IMAGE_TAG} . --no-cache"
                 }
             }
         }
 
-        stage('Create RDS Database & Table') {
+        stage('Run Backend Container') {   // 🔥 renamed (was duplicate name)
+            steps {
+                sh """
+                    docker rm -f easycrud1-jenkins:backend || true
+                    docker run -d --name easycrud1-backend -p 8080:8080 orionpax77/easycrud1-jenkins:backend
+                """
+            }
+        }
+
+        stage('Update .env File') {
+            steps {
+                script {
+                    def backendIp = sh(
+                        script: "curl -s ifconfig.me",
+                        returnStdout: true
+                    ).trim()
+
+                    sh """
+                        sed -i 's|BACKEND_URL=.*|BACKEND_URL=http://${backendIp}:8080|' .env
+                    """
+                }
+            }
+        }
+
+        stage('Build Frontend Image') {
+            steps {
+                dir('frontend') {
+                    sh "docker build -t orionpax77/easycrud1-jenkins:frontend-${IMAGE_TAG} . --no-cache"
+                    sh """
+                        docker rm -f easycrud1-jenkins:frontend || true
+                        docker run -d --name easycrud1-frontend -p 80:80 orionpax77/easycrud1-jenkins:frontend
+                    """
+                }
+            }
+        }
+
+        stage('Run Frontend Container Again') {  // 🔥 renamed duplicate
+            steps {
+                sh """
+                    docker rm -f easycrud1-jenkins:frontend || true
+                    docker run -d --name easycrud1-frontend -p 80:80 orionpax77/easycrud1-jenkins:frontend
+                """
+            }
+        }
+
+        stage('Docker Hub Login & Push') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'rds-creds',
-                    usernameVariable: 'DB_USER',
-                    passwordVariable: 'DB_PASS'
+                    credentialsId: 'dockerhub-cred',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
                 )]) {
-
-                    sh '''
-                    export MYSQL_PWD="$DB_PASS"
-
-                    mysql -h "$DB_HOST" \
-                          -P "$DB_PORT" \
-                          -u "$DB_USER" <<EOF
-
-                    CREATE DATABASE IF NOT EXISTS student_db;
-
-                    CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'redhat123';
-
-                    GRANT ALL PRIVILEGES ON student_db.* TO 'admin'@'%';
-
-                    FLUSH PRIVILEGES;
-
-                    USE student_db;
-
-                    CREATE TABLE IF NOT EXISTS students (
-                      id bigint(20) NOT NULL AUTO_INCREMENT,
-                      name varchar(255) DEFAULT NULL,
-                      email varchar(255) DEFAULT NULL,
-                      course varchar(255) DEFAULT NULL,
-                      student_class varchar(255) DEFAULT NULL,
-                      percentage double DEFAULT NULL,
-                      branch varchar(255) DEFAULT NULL,
-                      mobile_number varchar(255) DEFAULT NULL,
-                      PRIMARY KEY (id)
-                    );
-
-EOF
-                    '''
+                    sh """
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push orionpax77/easycrud1-jenkins:backend-${IMAGE_TAG}
+                        docker push orionpax77/easycrud1-jenkins:frontend-${IMAGE_TAG}
+                        docker logout
+                    """
                 }
             }
         }
@@ -103,13 +134,10 @@ EOF
 
     post {
         success {
-            echo "✅ Infrastructure + RDS Setup Completed Successfully!"
+            echo "✅ Full Infra + Deployment Successful!"
         }
         failure {
             echo "❌ Pipeline Failed!"
-        }
-        always {
-            echo "Pipeline Execution Finished."
         }
     }
 }
