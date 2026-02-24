@@ -2,89 +2,100 @@ pipeline {
     agent any
 
     environment {
-        // Docker Hub
-        DOCKERHUB_FRONT = "orionpax77/easycrud-frontend"
-        DOCKERHUB_BACK  = "orionpax77/easycrud-backend"
-
-        // Terraform vars
         AWS_REGION = "us-east-1"
+        DB_HOST    = "easycrud-mysql.cwliqc0oaf7s.us-east-1.rds.amazonaws.com"
+        DB_PORT    = "3306"
+    }
+
+    options {
+        timestamps()
     }
 
     stages {
 
         stage('Checkout Code') {
             steps {
-                git url: "https://github.com/orion-pax77/EasyCRUD-Docker.git", branch: "main"
+                echo "Cloning Repository..."
+                git branch: 'main',
+                    url: 'https://github.com/orion-pax77/EasyCRUD-Docker.git'
             }
         }
 
-        stage('Terraform Init & Apply Infra') {
+        stage('Terraform Init') {
             steps {
-                dir('Terraform') {
-                    withCredentials([[
+                withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-creds'
                 ]]) {
                     sh '''
-                        terraform init
-                        terraform apply -auto-approve
+                        terraform -chdir=terraform init -upgrade
+                        terraform -chdir=terraform validate
                     '''
                 }
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Terraform Plan') {
             steps {
-                sh """
-                docker build -t $DOCKERHUB_FRONT:latest ./frontend
-                docker build -t $DOCKERHUB_BACK:latest ./backend
-                """
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds'
+                ]]) {
+                    sh 'terraform -chdir=terraform plan -out=tfplan'
+                }
             }
         }
 
-        stage('Docker Hub Login') {
+        stage('Terraform Apply Infrastructure') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds'
+                ]]) {
+                    sh 'terraform -chdir=terraform apply -auto-approve tfplan'
+                }
+            }
+        }
+
+        stage('Create RDS Database & Table') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-cred',
-                    usernameVariable: 'DOCKERHUB_USER',
-                    passwordVariable: 'DOCKERHUB_PASS'
+                    credentialsId: 'rds-creds',
+                    usernameVariable: 'DB_USER',
+                    passwordVariable: 'DB_PASS'
                 )]) {
+
                     sh '''
-                    echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin
+                    export MYSQL_PWD="$DB_PASS"
+
+                    mysql -h "$DB_HOST" \
+                          -P "$DB_PORT" \
+                          -u "$DB_USER" <<EOF
+
+                    CREATE DATABASE IF NOT EXISTS student_db;
+
+                    CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'redhat123';
+
+                    GRANT ALL PRIVILEGES ON student_db.* TO 'admin'@'%';
+
+                    FLUSH PRIVILEGES;
+
+                    USE student_db;
+
+                    CREATE TABLE IF NOT EXISTS students (
+                      id bigint(20) NOT NULL AUTO_INCREMENT,
+                      name varchar(255) DEFAULT NULL,
+                      email varchar(255) DEFAULT NULL,
+                      course varchar(255) DEFAULT NULL,
+                      student_class varchar(255) DEFAULT NULL,
+                      percentage double DEFAULT NULL,
+                      branch varchar(255) DEFAULT NULL,
+                      mobile_number varchar(255) DEFAULT NULL,
+                      PRIMARY KEY (id)
+                    );
+
+EOF
                     '''
-                }
-            }
-        }
-
-        stage('Push Images to Docker Hub') {
-            steps {
-                sh """
-                docker push $DOCKERHUB_FRONT:latest
-                docker push $DOCKERHUB_BACK:latest
-                """
-            }
-        }
-
-        stage('Deploy to Provisioned EC2') {
-            steps {
-                script {
-                    def publicIp = sh(
-                        script: "terraform -chdir=terraform output -raw public_ip",
-                        returnStdout: true
-                    ).trim()
-
-                    sh """
-                    ssh -o StrictHostKeyChecking=no -i /path/to/your/key.pem ubuntu@$publicIp << 'EOF'
-                        docker rm -f easycrud_frontend || true
-                        docker rm -f easycrud_backend || true
-
-                        docker pull $DOCKERHUB_FRONT:latest
-                        docker pull $DOCKERHUB_BACK:latest
-
-                        docker run -d --name easycrud_frontend -p 80:80 $DOCKERHUB_FRONT:latest
-                        docker run -d --name easycrud_backend -p 8081:8081 $DOCKERHUB_BACK:latest
-                    EOF
-                    """
                 }
             }
         }
@@ -92,10 +103,13 @@ pipeline {
 
     post {
         success {
-            echo "🚀 Deployment Completed Successfully!"
+            echo "✅ Infrastructure + RDS Setup Completed Successfully!"
         }
         failure {
-            echo "❌ Deployment Failed!"
+            echo "❌ Pipeline Failed!"
+        }
+        always {
+            echo "Pipeline Execution Finished."
         }
     }
 }
