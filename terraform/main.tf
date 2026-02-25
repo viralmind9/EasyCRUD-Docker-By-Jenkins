@@ -20,14 +20,14 @@ data "aws_subnets" "default" {
 ###################################
 resource "aws_security_group" "rds_sg" {
   name        = "rds-mariadb-sg"
-  description = "Allow MySQL access"
+  description = "Allow MariaDB access"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
     from_port   = 3306
     to_port     = 3306
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]   # ⚠ Open to world (not secure)
+    cidr_blocks = ["0.0.0.0/0"]   # ⚠ For testing only
   }
 
   egress {
@@ -42,12 +42,12 @@ resource "aws_security_group" "rds_sg" {
 # DB Subnet Group
 ###################################
 resource "aws_db_subnet_group" "rds_subnet" {
-  name       = "rds-subnet-group"
+  name       = "rds-mariadb-subnet-group"
   subnet_ids = data.aws_subnets.default.ids
 }
 
 ###################################
-# RDS MySQL Instance
+# RDS MariaDB Instance (Free Tier)
 ###################################
 resource "aws_db_instance" "mariadb" {
   identifier              = "easycrud-mariadb"
@@ -55,15 +55,14 @@ resource "aws_db_instance" "mariadb" {
   max_allocated_storage   = 20
 
   engine                  = "mariadb"
-  engine_version          = "10.6.14"   # Free-tier supported version
+  engine_version          = "10.6.14"   # Free-tier supported stable version
 
-  instance_class          = "db.t4.micro"
+  instance_class          = "db.t4g.micro"
+  storage_type            = "gp2"
 
   db_name                 = "easycruddb"
   username                = "admin"
   password                = "redhat123"
-
-  storage_type            = "gp2"
 
   db_subnet_group_name    = aws_db_subnet_group.rds_subnet.name
   vpc_security_group_ids  = [aws_security_group.rds_sg.id]
@@ -78,7 +77,6 @@ resource "aws_db_instance" "mariadb" {
   auto_minor_version_upgrade    = true
 
   tags = {
-    Name = "EasyCRUD-mariadb"
+    Name = "EasyCRUD-MariaDB"
   }
 }
-fix this file
