@@ -55,7 +55,7 @@ resource "aws_db_instance" "mariadb" {
   max_allocated_storage   = 20
 
   engine                  = "mariadb"
-  engine_version          = "10.6.14"   # Free-tier supported stable version
+  engine_version          = "11.8.5"   # Free-tier supported stable version
 
   instance_class          = "db.t4g.micro"
   storage_type            = "gp2"
