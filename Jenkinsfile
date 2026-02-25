@@ -73,7 +73,7 @@ pipeline {
             }
         }
 
-        stage('Run Backend Container') {   // 🔥 renamed (was duplicate name)
+        stage('Run Backend Container') {   
             steps {
                 sh """
                     docker rm -f easycrud1-jenkins:backend || true
@@ -100,16 +100,13 @@ pipeline {
         stage('Build Frontend Image') {
             steps {
                 dir('frontend') {
-                    sh "docker build -t orionpax77/easycrud1-jenkins:frontend-${IMAGE_TAG} . --no-cache"
-                    sh """
-                        docker rm -f easycrud1-jenkins:frontend || true
-                        docker run -d --name easycrud1-frontend -p 80:80 orionpax77/easycrud1-jenkins:frontend
-                    """
+                    sh "docker build -t orionpax77/easycrud1-jenkins:frontend . --no-cache"
+                
                 }
             }
         }
 
-        stage('Run Frontend Container Again') {  // 🔥 renamed duplicate
+        stage('Run Frontend Container') {  
             steps {
                 sh """
                     docker rm -f easycrud1-jenkins:frontend || true
@@ -127,8 +124,8 @@ pipeline {
                 )]) {
                     sh """
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push orionpax77/easycrud1-jenkins:backend-${IMAGE_TAG}
-                        docker push orionpax77/easycrud1-jenkins:frontend-${IMAGE_TAG}
+                        docker push orionpax77/easycrud1-jenkins:backend
+                        docker push orionpax77/easycrud1-jenkins:frontend}
                         docker logout
                     """
                 }
