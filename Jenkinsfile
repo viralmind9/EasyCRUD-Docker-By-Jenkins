@@ -127,19 +127,17 @@ EOF
         }
 
         stage('Update .env File') {
-            steps {
-                script {
-                    def backendIp = sh(
-                        script: "curl -s ifconfig.me",
-                        returnStdout: true
-                    ).trim()
-
-                    sh """
-                        sed -i 's|BACKEND_URL=.*|BACKEND_URL=http://${backendIp}:8080|' .env
-                    """
-                }
-            }
-        }
+    steps {
+        sh """
+            if [ -f frontend/.env ]; then
+                sed -i 's|BACKEND_URL=.*|BACKEND_URL=http://easycrud1-backend:8080|' frontend/.env
+            else
+                echo ".env file not found!"
+                exit 1
+            fi
+        """
+    }
+}
 
         stage('Build Frontend Image') {
             steps {
