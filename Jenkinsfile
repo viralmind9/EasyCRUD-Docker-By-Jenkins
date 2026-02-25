@@ -11,8 +11,7 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/orion-pax77/EasyCRUD-Docker.git'
+                git branch: 'main', url: 'https://github.com/orion-pax77/EasyCRUD-Docker-By-Jenkins.git'
             }
         }
 
